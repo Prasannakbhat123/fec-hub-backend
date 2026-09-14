@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { FecMarket, CATEGORIES } from '../models/FecMarket.js';
 import { getFeedHealth } from '../services/feeds/health.js';
 import { runIngestOnce } from '../services/feeds/runner.js';
+import { getMarketIntel, IntelError } from '../services/openai/marketIntel.js';
 
 export const marketsRouter = Router();
 
@@ -47,6 +48,66 @@ marketsRouter.get('/', async (req, res, next) => {
       count: markets.length,
     });
   } catch (e) {
+    next(e);
+  }
+});
+
+marketsRouter.get('/:id/intel', async (req, res, next) => {
+  try {
+    const market = await FecMarket.findById(req.params.id).lean();
+    if (!market) {
+      res.status(404).json({ error: 'Market not found' });
+      return;
+    }
+
+    const oppositeVenue = market.venue === 'kalshi' ? 'polymarket' : 'kalshi';
+    const tokens = (market.matchTokens || []).slice(0, 3);
+
+    const [tokenMatches, topOpposite] = await Promise.all([
+      tokens.length >= 2
+        ? FecMarket.find({
+            venue: oppositeVenue,
+            matchTokens: { $in: tokens },
+          })
+            .sort({ volume: -1 })
+            .limit(12)
+            .lean()
+        : Promise.resolve([]),
+      FecMarket.find({ venue: oppositeVenue, category: market.category })
+        .sort({ volume: -1 })
+        .limit(16)
+        .lean(),
+    ]);
+
+    const byId = new Map<string, (typeof topOpposite)[number]>();
+    for (const row of [...tokenMatches, ...topOpposite]) {
+      byId.set(String(row._id), row);
+    }
+    const candidates = Array.from(byId.values())
+      .slice(0, 24)
+      .map((m) => ({
+        id: String(m._id),
+        title: m.title,
+        venue: m.venue,
+        yesPrice: m.yesPrice,
+      }));
+
+    const intel = await getMarketIntel({
+      id: String(market._id),
+      title: market.title,
+      category: market.category,
+      venue: market.venue,
+      yesPrice: market.yesPrice,
+      closesAt: market.closesAt,
+      candidates,
+    });
+
+    res.json(intel);
+  } catch (e) {
+    if (e instanceof IntelError) {
+      res.status(e.status).json({ error: e.message });
+      return;
+    }
     next(e);
   }
 });

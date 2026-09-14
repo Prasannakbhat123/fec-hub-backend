@@ -15,4 +15,5 @@ export const env = {
   feedPollIntervalMs: num('FEED_POLL_INTERVAL_MS', 300_000),
   kalshiSeriesLimit: num('KALSHI_SERIES_LIMIT', 24),
   polymarketQueryLimit: num('POLYMARKET_QUERY_LIMIT', 8),
+  openaiApiKey: process.env.OPENAI_API_KEY || '',
 };
